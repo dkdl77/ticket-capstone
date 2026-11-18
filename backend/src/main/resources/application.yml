@@ -1,0 +1,114 @@
+# 모든 값은 환경변수로 주입한다(12-factor). 비밀값의 기본값은 비워 두어, 빠지면 시작 시 검증에서 실패한다.
+app:
+  db:
+    host: ${DB_HOST:}
+    port: ${DB_PORT:3306}
+    name: ${DB_NAME:ticketing}
+    user: ${DB_USER:}
+    password: ${DB_PASSWORD:}
+    ssl-mode: ${DB_SSL_MODE:PREFERRED}
+    pool-size: ${DB_POOL_SIZE:10}
+  redis:
+    host: ${REDIS_HOST:}
+    port: ${REDIS_PORT:6379}
+    password: ${REDIS_PASSWORD:}
+    ssl: ${REDIS_SSL:false}
+    database: ${REDIS_DATABASE:0}
+  rate-limit:
+    general-per-minute: ${RATE_LIMIT_GENERAL_PER_MINUTE:120}
+    strict-per-minute: ${RATE_LIMIT_STRICT_PER_MINUTE:30}
+    poll-per-minute: ${RATE_LIMIT_POLL_PER_MINUTE:240}
+  cors:
+    allowed-origins: ${CORS_ALLOWED_ORIGINS:}
+  auth:
+    session-idle-minutes: ${SESSION_IDLE_MINUTES:30}
+    session-cookie-secure: ${SESSION_COOKIE_SECURE:true}
+  queue:
+    max-active: ${QUEUE_MAX_ACTIVE:100}
+    admit-seconds: ${QUEUE_ADMIT_SECONDS:600}
+    wait-ttl-seconds: ${QUEUE_WAIT_TTL_SECONDS:30}
+    hold-seconds: ${HOLD_SECONDS:300}
+
+spring:
+  application:
+    name: ticketing-backend
+  main:
+    banner-mode: off
+  threads:
+    virtual:
+      enabled: true
+  lifecycle:
+    timeout-per-shutdown-phase: 20s
+  datasource:
+    url: jdbc:mysql://${app.db.host}:${app.db.port}/${app.db.name}?sslMode=${app.db.ssl-mode}&connectionTimeZone=UTC&forceConnectionTimeZoneToSession=true&characterEncoding=UTF-8&rewriteBatchedStatements=true
+    username: ${app.db.user}
+    password: ${app.db.password}
+    hikari:
+      pool-name: ticketing-db
+      maximum-pool-size: ${app.db.pool-size}
+      minimum-idle: 2
+      connection-timeout: 3000
+      validation-timeout: 2000
+  data:
+    redis:
+      host: ${app.redis.host}
+      port: ${app.redis.port}
+      password: ${app.redis.password}
+      database: ${app.redis.database}
+      ssl:
+        enabled: ${app.redis.ssl}
+      timeout: 2s
+      connect-timeout: 2s
+      repositories:
+        enabled: false
+  session:
+    # v3: 세션은 Redis에(Spring Session). 서버 메모리 세션 없음 → 복제본·재시작과 무관, 스티키 세션 불필요.
+    # default 저장소 = 세션 하나당 Redis HASH 하나 + TTL(유휴 만료). 키스페이스 알림이 필요 없다.
+    redis:
+      namespace: ticketing:session
+      repository-type: default
+      flush-mode: on-save
+  flyway:
+    # 서버 기동 시에는 마이그레이션하지 않는다. `java -jar app.jar migrate` 에서만 켠다(application-migrate.yml).
+    enabled: false
+  jackson:
+    default-property-inclusion: always
+  web:
+    resources:
+      add-mappings: false
+
+server:
+  port: 8080
+  shutdown: graceful
+  # 신뢰하는 내부 프록시(사설 대역)가 붙인 X-Forwarded-For만 반영(Tomcat RemoteIpValve)
+  forward-headers-strategy: native
+  max-http-request-header-size: 8KB
+  servlet:
+    encoding:
+      charset: UTF-8
+      force: true
+    session:
+      timeout: ${app.auth.session-idle-minutes}m
+      tracking-modes: cookie          # URL에 세션 ID를 붙이지 않는다(;jsessionid= 금지)
+      cookie:
+        name: TKT_SESSION
+        http-only: true
+        secure: ${app.auth.session-cookie-secure}
+        same-site: lax
+        path: /
+  error:
+    whitelabel:
+      enabled: false
+    include-stacktrace: never
+    include-message: never
+  tomcat:
+    max-swallow-size: 64KB
+    connection-timeout: 10s
+
+logging:
+  structured:
+    format:
+      # stdout에 JSON 한 줄씩 (Elastic Common Schema)
+      console: ecs
+  level:
+    root: INFO

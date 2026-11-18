@@ -1,0 +1,18 @@
+# `java -jar app.jar migrate` (컨테이너: `docker run <image> migrate`) 일 때만 적용.
+# Flyway 마이그레이션 + 시드만 하고 종료한다. 웹 서버는 띄우지 않는다.
+spring:
+  main:
+    web-application-type: none
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
+app:
+  seed:
+    # 시연용 계정. 둘 다 있을 때만 만든다(비밀번호를 코드·SQL에 적지 않는다).
+    demo-email: ${SEED_DEMO_EMAIL:}
+    demo-password: ${SEED_DEMO_PASSWORD:}
+    demo-name: ${SEED_DEMO_NAME:시연 사용자}
+  redis:
+    # 마이그레이션은 Redis를 쓰지 않는다. 연결은 지연 생성이라 실제로 접속하지 않는다.
+    host: not-used-in-migrate
