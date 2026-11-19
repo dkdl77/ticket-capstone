@@ -8,12 +8,18 @@ import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Optional;
 import java.util.Random;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.context.annotation.Profile;
+import org.springframework.dao.DuplicateKeyException;
+import org.springframework.jdbc.support.GeneratedKeyHolder;
+import org.springframework.jdbc.support.KeyHolder;
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.jdbc.core.simple.JdbcClient;
@@ -34,7 +40,8 @@ import com.ticketing.show.Genre;
  * 실행 시각 기준 상대 날짜(KST)라 언제 돌려도 판매 중·오픈 예정·매진·종료가 섞인다.
  * <p>재실행 안전:
  * <ul>
- *   <li>공연은 slug, 회차는 (공연, 회차 번호)로 upsert → 중복 없이 날짜만 현재 기준으로 갱신</li>
+ *   <li>공연은 slug, 회차는 (공연, 회차 번호)로 upsert → 중복 없이 날짜만 현재 기준으로 갱신.
+ *       공연은 "조회 → UPDATE 또는 INSERT"라 갱신 때 id(AUTO_INCREMENT)를 소모하지 않는다 → 새 공연 id가 연속</li>
  *   <li>좌석과 "미리 판매된 좌석"은 회차에 좌석이 하나도 없을 때(처음 만들 때)만 넣는다 → 실제 예매는 보존</li>
  * </ul>
  */
@@ -42,6 +49,7 @@ import com.ticketing.show.Genre;
 @Profile(TicketingApplication.MIGRATE_PROFILE)
 public class Seeder {
 
+    private static final Logger log = LoggerFactory.getLogger(Seeder.class);
     private static final ZoneId KST = ZoneId.of("Asia/Seoul");
     private static final String SEED_EMAIL = "seed-system@ticketing.invalid";
     private static final String SEED_NAME = "시드 예매";
@@ -154,7 +162,53 @@ public class Seeder {
                     "물을 주제로 고른 소품들로 꾸민 피아노 독주회.",
                     VenueLayout.FAN,
                     List.of(new SeedGrade("R", "R석", 70_000, 4), new SeedGrade("S", "S석", 50_000, 0)),
-                    List.of(new SeedPerf(15, t(19, 30), 0.12)), 175));
+                    List.of(new SeedPerf(15, t(19, 30), 0.12)), 175),
+
+            // ---- 추가 공연(13~18) — 반드시 목록 맨 끝에 붙인다. 새 DB에서 id 13~18이 이 순서로 매겨져
+            //      frontend/public/posters/{id}.webp 와 맞아야 하므로 앞 12개의 순서·위치를 바꾸지 않는다. ----
+            new SeedShow("sunset-jazz-eleven-pm", "노을빛 재즈 쿼텟 〈밤 열한 시〉", Genre.CONCERT, "별무리 라이브홀",
+                    -6, t(14, 0), "8세 이상", 110, List.of("노을빛 재즈 쿼텟"),
+                    "늦은 밤에 어울리는 곡들로 꾸민 재즈 쿼텟의 라이브. 스탠더드와 자작곡을 번갈아 연주합니다.",
+                    VenueLayout.SMALL,
+                    List.of(new SeedGrade("R", "R석", 77_000, 3), new SeedGrade("S", "S석", 55_000, 0)),
+                    List.of(new SeedPerf(1, t(20, 0), 0.45), new SeedPerf(2, t(20, 0), 0.3)), 245),
+            new SeedShow("first-snow-folk-concert", "겨울맞이 포크 콘서트 〈첫눈 오는 날〉", Genre.CONCERT, "누리 아트홀",
+                    -9, t(10, 0), "8세 이상", 120, List.of("한낮의 기타", "은하수 듀오"),
+                    "통기타와 목소리만으로 채우는 겨울맞이 포크 무대.",
+                    VenueLayout.FAN,
+                    List.of(new SeedGrade("VIP", "VIP석", 99_000, 2), new SeedGrade("R", "R석", 88_000, 4),
+                            new SeedGrade("S", "S석", 66_000, 0)),
+                    List.of(new SeedPerf(11, t(18, 0), 0.25), new SeedPerf(12, t(19, 30), 0.15)), 200),
+            new SeedShow("moonlight-laundry", "뮤지컬 〈달빛 세탁소〉", Genre.MUSICAL, "온새미로 극장",
+                    -8, t(14, 0), "8세 이상", 155, List.of("강이든", "문가람", "설나래"),
+                    "밤에만 문을 여는 세탁소에 저마다의 사연이 담긴 빨래가 모여드는 창작 뮤지컬.\n2막 구성, 인터미션 15분.",
+                    VenueLayout.MEDIUM,
+                    List.of(new SeedGrade("VIP", "VIP석", 150_000, 3), new SeedGrade("R", "R석", 130_000, 4),
+                            new SeedGrade("S", "S석", 99_000, 0)),
+                    List.of(new SeedPerf(8, t(19, 30), 0.5), new SeedPerf(9, t(14, 0), 0.65),
+                            new SeedPerf(9, t(19, 0), 0.4), new SeedPerf(10, t(15, 0), 0.2)), 330),
+            new SeedShow("bus-leaves-at-eight", "연극 〈버스는 여덟 시에 떠난다〉", Genre.PLAY, "모퉁이 극장",
+                    -5, t(14, 0), "13세 이상", 100, List.of("진서우", "하도윤", "민채아"),
+                    "막차를 기다리는 시골 정류장에서 처음 만난 세 사람의 하룻밤.",
+                    VenueLayout.CUT_CORNERS,
+                    List.of(new SeedGrade("R", "R석", 55_000, 4), new SeedGrade("S", "S석", 44_000, 0)),
+                    List.of(new SeedPerf(0, t(20, 0), 0.7), new SeedPerf(1, t(20, 0), 0.35),
+                            new SeedPerf(2, t(16, 0), 0.1)), 70),
+            new SeedShow("long-winter-cello", "첼로와 피아노의 밤 〈긴 겨울의 노래〉", Genre.CLASSIC, "하늘결 체임버홀",
+                    -4, t(10, 0), "8세 이상", 100, List.of("첼리스트 하온결", "피아니스트 길한별"),
+                    "첼로와 피아노로 듣는 겨울의 소나타와 소품.",
+                    VenueLayout.FAN,
+                    List.of(new SeedGrade("R", "R석", 70_000, 3), new SeedGrade("S", "S석", 50_000, 4),
+                            new SeedGrade("A", "A석", 30_000, 0)),
+                    List.of(new SeedPerf(11, t(17, 0), 0.15)), 160),
+            new SeedShow("cat-postman", "뮤지컬 〈고양이 우체부〉", Genre.MUSICAL, "별빛 씨어터",
+                    -7, t(14, 0), "36개월 이상", 80, List.of("봉하람", "채도담"),
+                    "편지를 배달하는 고양이와 동네 아이들의 모험을 그린 가족 뮤지컬.",
+                    VenueLayout.FAN,
+                    List.of(new SeedGrade("VIP", "VIP석", 80_000, 2), new SeedGrade("R", "R석", 66_000, 3),
+                            new SeedGrade("S", "S석", 44_000, 0)),
+                    List.of(new SeedPerf(5, t(14, 0), 0.55), new SeedPerf(6, t(11, 0), 0.3),
+                            new SeedPerf(6, t(14, 0), 0.6)), 110));
 
     public record Result(int shows, int performances, int newSeats, int newSeedReservations, boolean demoAccount) {
     }
@@ -195,6 +249,7 @@ public class Seeder {
         if (demo) {
             auth.upsertDemoAccount(demoEmail, demoPassword, demoName);
         }
+        resetShowIdCounter(); // 새 공연 id가 기존 최대 id 다음 번호가 되도록(트랜잭션 밖에서)
         LocalDate today = now.atZone(KST).toLocalDate();
         int performances = 0;
         int newSeats = 0;
@@ -210,30 +265,92 @@ public class Seeder {
         return new Result(SHOWS.size(), performances, newSeats, newReservations, demo);
     }
 
-    private int[] seedShow(int showIndex, SeedShow s, LocalDate today) {
-        Instant saleOpensAt = at(today, s.saleOpensDay(), s.saleOpensTime());
-        jdbc.sql("""
-                        INSERT INTO shows (slug, title, genre, venue, sale_opens_at, age_rating, running_minutes,
-                                           cast_members, description, notices, poster_seed, poster_hue,
-                                           seat_rows, seats_per_row, aisle_after)
-                        VALUES (:slug, :title, :genre, :venue, :opens, :age, :running,
-                                :cast, :description, :notices, :seed, :hue, :rows, :perRow, :aisle) AS new
-                        ON DUPLICATE KEY UPDATE
-                            title = new.title, genre = new.genre, venue = new.venue, sale_opens_at = new.sale_opens_at,
-                            age_rating = new.age_rating, running_minutes = new.running_minutes,
-                            cast_members = new.cast_members, description = new.description, notices = new.notices,
-                            poster_seed = new.poster_seed, poster_hue = new.poster_hue
-                        """)
-                .param("slug", s.slug()).param("title", s.title()).param("genre", s.genre().name())
+    /**
+     * 공연 upsert. "slug로 조회 → 있으면 UPDATE, 없으면 INSERT".
+     * INSERT ... ON DUPLICATE KEY UPDATE는 갱신만 해도 InnoDB AUTO_INCREMENT 값을 하나씩 소모한다
+     * → migrate를 여러 번 돌린 DB에 새 공연을 넣으면 id가 13이 아니라 훨씬 큰 값이 되어 포스터 파일(posters/{id}.webp)과 어긋났다.
+     * 좌석 배치(seat_rows·seats_per_row·aisle_after)는 이미 만든 좌석과 맞아야 하므로 갱신하지 않는다(INSERT 때만).
+     */
+    private long upsertShow(int showIndex, SeedShow s, Instant saleOpensAt) {
+        Optional<Long> existing = jdbc.sql("SELECT id FROM shows WHERE slug = :slug").param("slug", s.slug())
+                .query(Long.class).optional();
+        if (existing.isPresent()) {
+            updateShow(existing.get(), showIndex, s, saleOpensAt);
+            return existing.get();
+        }
+        try {
+            KeyHolder keys = new GeneratedKeyHolder();
+            showParams(jdbc.sql("""
+                            INSERT INTO shows (slug, title, genre, venue, sale_opens_at, age_rating, running_minutes,
+                                               cast_members, description, notices, poster_seed, poster_hue,
+                                               seat_rows, seats_per_row, aisle_after)
+                            VALUES (:slug, :title, :genre, :venue, :opens, :age, :running,
+                                    :cast, :description, :notices, :seed, :hue, :rows, :perRow, :aisle)
+                            """), showIndex, s, saleOpensAt)
+                    .param("slug", s.slug())
+                    .param("rows", s.layout().rows()).param("perRow", s.layout().seatsPerRow())
+                    .param("aisle", toJson(s.layout().aisleAfter()))
+                    .update(keys);
+            return keys.getKey().longValue();
+        } catch (DuplicateKeyException e) {
+            // 다른 migrate가 같은 순간 먼저 넣었다(Job 중복 실행 등) → 그 행을 갱신
+            long id = jdbc.sql("SELECT id FROM shows WHERE slug = :slug").param("slug", s.slug())
+                    .query(Long.class).single();
+            updateShow(id, showIndex, s, saleOpensAt);
+            return id;
+        }
+    }
+
+    private void updateShow(long id, int showIndex, SeedShow s, Instant saleOpensAt) {
+        showParams(jdbc.sql("""
+                        UPDATE shows
+                           SET title = :title, genre = :genre, venue = :venue, sale_opens_at = :opens,
+                               age_rating = :age, running_minutes = :running, cast_members = :cast,
+                               description = :description, notices = :notices, poster_seed = :seed, poster_hue = :hue
+                         WHERE id = :id
+                        """), showIndex, s, saleOpensAt)
+                .param("id", id)
+                .update();
+    }
+
+    private JdbcClient.StatementSpec showParams(JdbcClient.StatementSpec spec, int showIndex, SeedShow s,
+            Instant saleOpensAt) {
+        return spec.param("title", s.title()).param("genre", s.genre().name())
                 .param("venue", s.venue()).param("opens", Timestamp.from(saleOpensAt)).param("age", s.ageRating())
                 .param("running", s.runningMinutes()).param("cast", toJson(s.cast()))
                 .param("description", s.description()).param("notices", toJson(COMMON_NOTICES))
-                .param("seed", 1000 + showIndex * 37).param("hue", s.hue())
-                .param("rows", s.layout().rows()).param("perRow", s.layout().seatsPerRow())
-                .param("aisle", toJson(s.layout().aisleAfter()))
-                .update();
-        long showId = jdbc.sql("SELECT id FROM shows WHERE slug = :slug").param("slug", s.slug())
-                .query(Long.class).single();
+                .param("seed", 1000 + showIndex * 37).param("hue", s.hue());
+    }
+
+    /**
+     * 이미 카운터가 올라간 기존 DB(예전 ON DUPLICATE KEY UPDATE 방식으로 migrate를 여러 번 돌린 DB)를 위해
+     * 공연 테이블의 AUTO_INCREMENT를 "현재 최대 id + 1"로 되돌린다. 필요할 때만 실행한다.
+     * - migrate는 소유자 계정으로 돌아 ALTER 권한이 있다. API 서버는 공연을 INSERT하지 않으므로 그사이 끼어드는 INSERT가 없다.
+     * - DDL은 매개변수를 바인딩할 수 없어 숫자를 문자열로 붙인다. 값은 사용자 입력이 아니라 DB에서 읽은 long이다.
+     * - ALTER는 암묵적으로 커밋하므로 트랜잭션 밖(시드 시작 시)에서 한 번 실행한다.
+     */
+    long resetShowIdCounter() {
+        long next = jdbc.sql("SELECT COALESCE(MAX(id), 0) + 1 FROM shows").query(Long.class).single();
+        // information_schema의 통계 캐시(기본 24시간)를 쓰지 않고 실제 값을 읽는다.
+        // SET SESSION과 SELECT가 같은 커넥션에서 실행되도록 한 트랜잭션으로 묶는다.
+        Long current = tx.inTransaction(() -> {
+            jdbc.sql("SET SESSION information_schema_stats_expiry = 0").update();
+            return jdbc.sql("""
+                            SELECT AUTO_INCREMENT FROM information_schema.TABLES
+                             WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'shows'
+                            """)
+                    .query(Long.class).optional().orElse(null);
+        });
+        if (current != null && current > next) {
+            jdbc.sql("ALTER TABLE shows AUTO_INCREMENT = " + next).update();
+            log.info("공연 id 카운터를 {} → {}로 되돌림", current, next);
+        }
+        return next;
+    }
+
+    private int[] seedShow(int showIndex, SeedShow s, LocalDate today) {
+        Instant saleOpensAt = at(today, s.saleOpensDay(), s.saleOpensTime());
+        long showId = upsertShow(showIndex, s, saleOpensAt);
 
         for (int g = 0; g < s.grades().size(); g++) {
             SeedGrade grade = s.grades().get(g);
